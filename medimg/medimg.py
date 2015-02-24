@@ -489,6 +489,7 @@ class MedImgReader(nimsdata.NIMSReader):
         self.scan_type = None
         self.is_localizer = None
         self.is_dwi = None
+        self.is_fastcard = None
         self.is_non_image = None
         self.failure_reason = None
 
