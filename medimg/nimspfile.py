@@ -747,7 +747,7 @@ class NIMSPFile(medimg.MedImgReader):
                 if self.flip_lr:
                     self.data[k] = self.data[k][::-1,:,:,]
 
-    def load_data(self, num_jobs=None, num_virtual_coils=None, tempdir=None, aux_file=None):
+    def load_data(self, num_jobs=None, num_virtual_coils=None, tempdir=None, aux_file=None, db_desc=None):
         """
         Load the data and run the appropriate reconstruction.
 
@@ -772,6 +772,7 @@ class NIMSPFile(medimg.MedImgReader):
         self.num_vcoils = num_virtual_coils or self.num_vcoils
         self.aux_file = aux_file or self.aux_file
         self.tempdir = tempdir or self.tempdir
+        self.series_desc = db_desc or self.series_desc
 
         if tarfile.is_tarfile(self.filepath):
             log.debug('loading data from tgz %s' % self.filepath)
@@ -1051,6 +1052,13 @@ class NIMSPFile(medimg.MedImgReader):
                 else:
                     raise NIMSPFileError('ref.dat/vrgf.dat not found')
 
+            # TODO:  make this real
+            # toggle an option based on the series_desc
+            # if if self.series_desc and self.series_desc.endswith('stringmatch'):
+            #       recon_option = 1
+            # else:
+            #       recon_option = 0
+
             # run the actual recon, spawning subprocess until all slices have been spawned.
             log.info('Running %d v-coil mux recon on %s in tempdir %s with %d jobs (recon=%s, fermi=%d, homodyne=%d, notch=%f).'
                     % (self.num_vcoils, filepath, temp_dirpath, self.num_jobs, recon_type, fermi_filt, homodyne, self.notch_thresh))
@@ -1068,6 +1076,9 @@ class NIMSPFile(medimg.MedImgReader):
                     # Use 'str' on timepoints so that an empty array will produce '[]'
                     cmd = ('%s --no-window-system -p %s --eval \'mux_epi_main("%s", "%s_%03d.mat", "%s", %d, %s, %d, 0, "%s", %s, %s, %s);\''
                         % (octave_bin, recon_path, filepath, outname, slice_num, cal_file, slice_num + 1, str(timepoints), self.num_vcoils, recon_type, str(fermi_filt), str(homodyne), str(self.notch_thresh)))
+                    # update the octave command to include the option that was decided by series_desc
+                    # cmd = ('%s --no-window-system -p %s --eval \'mux_epi_main("%s", "%s_%03d.mat", "%s", %d, %s, %d, 0, "%s", %s, %s, %s, %s);\''
+                    #     % (octave_bin, recon_path, filepath, outname, slice_num, cal_file, slice_num + 1, str(timepoints), self.num_vcoils, recon_type, str(fermi_filt), str(homodyne), str(self.notch_thresh), recon_option))
                     log.debug(cmd)
                     mux_recon_jobs.append(subprocess.Popen(args=shlex.split(cmd), stdout=open('/dev/null', 'w')))
                     slice_num += 1
