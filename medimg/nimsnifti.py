@@ -69,32 +69,25 @@ class NIMSNifti(medimg.MedImgReader, medimg.MedImgWriter):
 
     def __init__(self, path, load_data=False):
         super(NIMSNifti, self).__init__(path, load_data)
+        log.debug('reading %s' % path)
         try:
-            # TODO: load header only, unless load_data = True
+            # TODO: load sorting/identification header
             self.nifti = nibabel.load(path)
         except Exception as e:
             raise NIMSNiftiError(e)
-        # parse some header info from the nifti
-        # self.metadata._hdr = get header
-        # first simple parse of _hdr
 
-    def load_data(self, preloaded):
-        super(NIMSNifti, self).load_data(preloaded)
-        if not preloaded:
-            try:
-                nifti = nibabel.load(self.filepath)
-            except Exception as e:
-                raise NIMSNiftiError(e)
+        # TODO: read metadata from nifti extension header
 
-        # TODO: nibabel nifti header reader
-        # self.metadata.group
-        # self.metadata.project
-        # self.metadata.exam_uid
-        self.data = nifti.imagedata.squeeze()
-        self.qto_xyz = nifti.get_affine()
-        self.sform = nifti.get_sform()
-        self.qform = nifti.get_qform()
-        self.image_type = ['derived', 'nifti', self.filetype]
+        if load_data:
+            self.load_data()
+
+    def load_data(self):
+        super(NIMSNifti, self).load_data()
+        log.debug('loading data...')
+        self.data = {'': self.nifti.get_data()}
+        self.qto_xyz = self.nifti.get_affine()
+        self.sform = self.nifti.get_sform()
+        self.qform = self.nifti.get_qform()
         self.scan_type = 'unknown'   # FIXME
 
     @property
