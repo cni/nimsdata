@@ -758,7 +758,7 @@ if __name__ == '__main__':
 
     log = logging.getLogger('nimsdata')
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='E.g., nimsdata.py -i -p pfile -w nifti --parser_kwarg="aux_file=P12345.7" --parser_kwarg="num_jobs=32" P23456.7 outfile.')
     parser.add_argument('input', help='file to convert')
     parser.add_argument('outbase', nargs='?', help='basename for output files (default: input)')
     parser.add_argument('-p', '--parser', help='parser to use', choices=nimsdata.nimsdata.READERS.keys())
