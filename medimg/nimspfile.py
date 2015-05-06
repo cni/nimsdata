@@ -747,7 +747,7 @@ class NIMSPFile(medimg.MedImgReader):
                 if self.flip_lr:
                     self.data[k] = self.data[k][::-1,:,:,]
 
-    def load_data(self, num_jobs=None, num_virtual_coils=None, tempdir=None, aux_file=None):
+    def load_data(self, num_jobs=None, num_virtual_coils=None, tempdir=None, aux_file=None, db_desc=None):
         """
         Load the data and run the appropriate reconstruction.
 
@@ -772,6 +772,7 @@ class NIMSPFile(medimg.MedImgReader):
         self.num_vcoils = num_virtual_coils or self.num_vcoils
         self.aux_file = aux_file or self.aux_file
         self.tempdir = tempdir or self.tempdir
+        self.series_desc = db_desc or self.series_desc
 
         if tarfile.is_tarfile(self.filepath):
             log.debug('loading data from tgz %s' % self.filepath)
@@ -992,10 +993,16 @@ class NIMSPFile(medimg.MedImgReader):
         if self.recon_type==None:
             # set the recon type automatically
             # Scans with mux>1, arc>1, caipi
-            if self.is_dwi and self.num_bands>1 and self.phase_encode_undersample<1. and self.caipi:
-                recon_type = 'sense'
+            if self.is_dwi:
+                if self.num_bands>1 and self.phase_encode_undersample<1. and self.caipi:
+                    recon_type = 'sense'
+                else:
+                    recon_type = '1Dgrappa_sense1'
             else:
-                recon_type = '1dgrappa'
+                if self.series_desc and 'sense1' in self.series_desc.lower()
+                    recon_type = '1Dgrappa_sense1'
+                else:
+                    recon_type = '1Dgrappa'
         else:
             recon_type = self.recon_type
 
