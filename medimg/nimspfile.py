@@ -999,7 +999,7 @@ class NIMSPFile(medimg.MedImgReader):
                 else:
                     recon_type = '1Dgrappa_sense1'
             else:
-                if self.series_desc and 'sense1' in self.series_desc.lower()
+                if self.series_desc and 'sense1' in self.series_desc.lower():
                     recon_type = '1Dgrappa_sense1'
                 else:
                     recon_type = '1Dgrappa'
