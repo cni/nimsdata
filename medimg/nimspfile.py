@@ -994,10 +994,7 @@ class NIMSPFile(medimg.MedImgReader):
             # set the recon type automatically
             # Scans with mux>1, arc>1, caipi
             if self.is_dwi:
-                if self.num_bands>1 and self.phase_encode_undersample<1. and self.caipi:
-                    recon_type = 'sense'
-                else:
-                    recon_type = '1Dgrappa_sense1'
+                recon_type = '1Dgrappa_sense1'
             else:
                 if self.series_desc and 'sense1' in self.series_desc.lower():
                     recon_type = '1Dgrappa_sense1'
@@ -1063,7 +1060,7 @@ class NIMSPFile(medimg.MedImgReader):
                     % (self.num_vcoils, filepath, temp_dirpath, self.num_jobs, recon_type, fermi_filt, homodyne, self.notch_thresh))
             if cal_file!='':
                 log.info('Using calibration file: %s' % cal_file)
-            recon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'mux_epi_recon'))
+            recon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'mux_epi_recon_bin'))
             outname = os.path.join(temp_dirpath, 'sl')
 
             mux_recon_jobs = []
@@ -1073,8 +1070,10 @@ class NIMSPFile(medimg.MedImgReader):
                 if num_running_jobs < self.num_jobs:
                     # Recon each slice separately. Note the slice_num+1 to deal with matlab's 1-indexing.
                     # Use 'str' on timepoints so that an empty array will produce '[]'
-                    cmd = ('%s --no-window-system -p %s --eval \'mux_epi_main("%s", "%s_%03d.mat", "%s", %d, %s, %d, 0, "%s", %s, %s, %s);\''
-                        % (octave_bin, recon_path, filepath, outname, slice_num, cal_file, slice_num + 1, str(timepoints), self.num_vcoils, recon_type, str(fermi_filt), str(homodyne), str(self.notch_thresh)))
+                    #cmd = ('%s --no-window-system -p %s --eval \'mux_epi_main("%s", "%s_%03d.mat", "%s", %d, %s, %d, 0, "%s", %s, %s, %s);\''
+                    #    % (octave_bin, recon_path, filepath, outname, slice_num, cal_file, slice_num + 1, str(timepoints), self.num_vcoils, recon_type, str(fermi_filt), str(homodyne), str(self.notch_thresh)))
+                    cmd = ("%s/run_muxrecon.sh %s/lib '%s' '%s_%03d.mat' '%s' %d %d '%s'"
+                        % (recon_path, recon_path, filepath, outname, slice_num, cal_file, slice_num+1, self.num_vcoils, recon_type))
                     log.debug(cmd)
                     mux_recon_jobs.append(subprocess.Popen(args=shlex.split(cmd), stdout=open('/dev/null', 'w')))
                     slice_num += 1
