@@ -862,31 +862,35 @@ class NIMSPFile(medimg.MedImgReader):
 
         Update dataset metadata to be consistent with the imagedata.
 
+        NOTE: Only the first image in the list is used to update the metadata!
+
         TODO: this assumes there is only a primary dataset. needs to rewritten for the
         case where there is primary and secondary data.
 
         Parameters
         ----------
-        imagedata : array
+        imagedata : tuple or list of arrays
             np array of voxel data
-        key : str [default ''] (empty string is primary dataset)
+        key : tuple or list of str (empty string is primary dataset)
             which key to use in data dict.
 
         """
-        if imagedata.shape[0] != self.size[0] or imagedata.shape[1] != self.size[1]:
+        if imagedata[0].shape[0] != self.size[0] or imagedata[0].shape[1] != self.size[1]:
             log.warning('Image matrix discrepancy. Fixing the header, assuming imagedata is correct...')
-            self.size = [imagedata.shape[0], imagedata.shape[1]]
+            self.size = [imagedata[0].shape[0], imagedata[0].shape[1]]
             self.mm_per_vox_x = self.fov_x / self.size_y
             self.mm_per_vox_y = self.fov_y / self.size_y
-        if imagedata.shape[2] != self.num_slices * self.num_bands:
+        if imagedata[0].shape[2] != self.num_slices * self.num_bands:
             log.warning('Image slice count discrepancy. Fixing the header, assuming imagedata is correct...')
-            self.num_slices = imagedata.shape[2]
-        if imagedata.shape[3] != self.num_timepoints:
+            self.num_slices = imagedata[0].shape[2]
+        if imagedata[0].shape[3] != self.num_timepoints:
             log.warning('Image time frame discrepancy (header=%d, array=%d). Fixing the header, assuming imagedata is correct...'
-                    % (self.num_timepoints, imagedata.shape[3]))
-            self.num_timepoints = imagedata.shape[3]
+                    % (self.num_timepoints, imagedata[0].shape[3]))
+            self.num_timepoints = imagedata[0].shape[3]
         self.duration = self.num_timepoints * self.tr # FIXME: maybe need self.num_echos?
-        self.data = {key: imagedata}
+        self.data = {}
+        for i,k in enumerate(key):
+            self.data[k] = imagedata[i]
 
     def recon_hoshim(self, filepath, tempdir=None):
         log.debug('HOSHIM recon not implemented')
@@ -992,8 +996,9 @@ class NIMSPFile(medimg.MedImgReader):
 
         if self.recon_type==None:
             # set the recon type automatically
-            # Scans with mux>1, arc>1, caipi
-            if self.is_dwi:
+            # Diffusion and inversion-recovery (for T1-mapping) always get SENSE1.
+            # (Eventually we
+            if self.is_dwi or self.ti>0.0:
                 recon_type = '1Dgrappa_sense1'
             else:
                 if self.series_desc and 'sense1' in self.series_desc.lower():
@@ -1092,8 +1097,10 @@ class NIMSPFile(medimg.MedImgReader):
                 t = min(img.shape[-1], new_img.shape[-1])
                 img[...,0:t] += new_img[...,0:t]
 
-            img = img.astype(np.float32)
-            self.update_imagedata(img)
+            if np.iscomplexobj(img):
+                self.update_imagedata((np.abs(img).astype(np.float32), np.angle(img).astype(np.float32)), ('','phase'))
+            else:
+                self.update_imagedata((img.astype(np.float32),), ('',))
             elapsed = time.time() - start_sec
             log.info('Mux recon of %s with %d v-coils finished in %0.2f minutes using %d jobs.'
                         % (self.filepath, self.num_vcoils,  elapsed/60., min(self.num_jobs, self.num_slices)))
