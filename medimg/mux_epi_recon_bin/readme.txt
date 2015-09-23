@@ -2,7 +2,7 @@ This is a compiled version of our multiband (mux) reconstructiuon package (avail
 
   http://www.mathworks.com/products/compiler/mcr/index.html
 
-We suggest that you install teh MCR in the mux_epi_recon_bin directory (the same directory that contains the run_muxrecon.sh script) in a directory call 'lib'. E.g., here's what it looks like on our systems:
+We suggest that you install the MCR in the mux_epi_recon_bin directory (the same directory that contains the run_muxrecon.sh script) in a directory named 'lib'. E.g., here's what it looks like on our systems:
 
   $ ls mux_epi_recon_bin/
     lib  muxrecon  readme.txt  run_muxrecon.sh
@@ -11,24 +11,19 @@ We suggest that you install teh MCR in the mux_epi_recon_bin directory (the same
 
 To run the shell script that starts the recon, cd into the mux_epi_recon_bin directory and type
  
-  ./run_muxrecon.sh ./lib <argument_list>
-
-at Linux or Mac command prompt. <argument_list> is all the arguments you want to pass to the recon:
-
   ./run_muxrecon.sh ./lib [pfile] [outfile] [ext_cal] [slice] [n_vcoils] [recon_method]
+
+at a Linux or Mac command prompt. The arguments are as follows:
   
-  pfile       - Filename of the pfile, or the directory containing a pfile.
-  outfile     - The file for saving the results.
-  ext_cal     - External calibration pfile name (either mux>1 or mux=1). Leave empty for internally calibrated scans.
-  slices      - Indices of the (muxed) slices to reconstruct. Default: All slices.
+  pfile       - Filename of the pfile. Note that the ref.dat and vrgf.dat files must be in the same directory as the pfile, and there should only be one of each in there. (I.e., keep each p-file and its associated files in a directory separate from other p-files.)
+  outfile     - The file for saving the results. (This will be a Matlab 'mat' file.)
+  ext_cal     - External calibration pfile. Leave empty for internally calibrated scans.
+  slices      - Indices of the (muxed) slices to reconstruct. Leave empty to reconstruct all slices.
   n_vcoils    - Number of virtual coils for coil compression. Set to 0 for no coil compression.
-  recon_method- '1Dgrappa' or numbers other than 1: use 1D-GRAPPA;
-                'sense' or number 1: use SENSE;
-                'slice-grappa': use slice-GRAPPA;
-                'split-slice-grappa': use split-slice-GRAPPA.
+  recon_method- '1Dgrappa', 'sense', 'slice-grappa', or 'split-slice-grappa'.
                 Append '_sense1' to use sense coil combination. E.g., '1Dgrappa_sense1'.
 
-For example, to recon all slices for an internally-calibrated scan using 1D GRAPPA with SENSE coil combination (the recommended recon, especially for diffusion scans) and 16 virtual coils:
+For example, to recon all slices for an internally-calibrated scan using 1D GRAPPA with SENSE coil combination (the recommended recon method, especially for diffusion scans), and 16 virtual coils:
 
   ./run_muxrecon.sh ./lib /path/to/P01024.7 /path/to/outfile '' '' 16 1Dgrappa_sense1
 
