@@ -1,104 +1,39 @@
-MATLAB Compiler
+This is a compiled version of our multiband (mux) reconstructiuon package (available in a private github repo). To run it, you will need to install the R2013b (i.e., version 8.2) Matlab run-time (MCR), available for free download from the Mathworks site:
 
-1. Prerequisites for Deployment 
+  http://www.mathworks.com/products/compiler/mcr/index.html
 
-. Verify the MATLAB Compiler Runtime (MCR) is installed and ensure you    
-  have installed version 8.2 (R2013b).   
+We suggest that you install teh MCR in the mux_epi_recon_bin directory (the same directory that contains the run_muxrecon.sh script) in a directory call 'lib'. E.g., here's what it looks like on our systems:
 
-. If the MCR is not installed, do the following:
-  (1) enter
+  $ ls mux_epi_recon_bin/
+    lib  muxrecon  readme.txt  run_muxrecon.sh
+  $ ls mux_epi_recon_bin/lib/
+    appdata  bin  etc  extern  help  java  license.txt  mcr  MCR_license.txt  patents.txt  polyspace  resources  rtw  runtime  simulink  sys  toolbox  trademarks.txt  X11
+
+To run the shell script that starts the recon, cd into the mux_epi_recon_bin directory and type
+ 
+  ./run_muxrecon.sh ./lib <argument_list>
+
+at Linux or Mac command prompt. <argument_list> is all the arguments you want to pass to the recon:
+
+  ./run_muxrecon.sh ./lib [pfile] [outfile] [ext_cal] [slice] [n_vcoils] [recon_method]
   
-      >>mcrinstaller
-      
-      at MATLAB prompt. The MCRINSTALLER command displays the 
-      location of the MCR Installer.
+  pfile       - Filename of the pfile, or the directory containing a pfile.
+  outfile     - The file for saving the results.
+  ext_cal     - External calibration pfile name (either mux>1 or mux=1). Leave empty for internally calibrated scans.
+  slices      - Indices of the (muxed) slices to reconstruct. Default: All slices.
+  n_vcoils    - Number of virtual coils for coil compression. Set to 0 for no coil compression.
+  recon_method- '1Dgrappa' or numbers other than 1: use 1D-GRAPPA;
+                'sense' or number 1: use SENSE;
+                'slice-grappa': use slice-GRAPPA;
+                'split-slice-grappa': use split-slice-GRAPPA.
+                Append '_sense1' to use sense coil combination. E.g., '1Dgrappa_sense1'.
 
-  (2) run the MCR Installer.
+For example, to recon all slices for an internally-calibrated scan using 1D GRAPPA with SENSE coil combination (the recommended recon, especially for diffusion scans) and 16 virtual coils:
 
-Or download the Linux 64-bit version of the MCR for R2013b 
-from the MathWorks Web site by navigating to
+  ./run_muxrecon.sh ./lib /path/to/P01024.7 /path/to/outfile '' '' 16 1Dgrappa_sense1
 
-   http://www.mathworks.com/products/compiler/mcr/index.html
-   
-   
-For more information about the MCR and the MCR Installer, see 
-Distribution to End Users in the MATLAB Compiler documentation  
-in the MathWorks Documentation Center.    
+Note that this reconstruction saves the resulting images in Matlab '.mat' files. To generate NIFTI files (and also allow parallelization of the recon), use nimsdata (https://github.com/cni/nimsdata/nimsdata.py). E.g.:
 
-
-2. Files to Deploy and Package
-
-Files to package for Standalone 
-================================
--muxrecon 
--run_muxrecon.sh (shell script for temporarily setting environment variables and 
-                  executing the application)
-   -to run the shell script, type
-   
-       ./run_muxrecon.sh <mcr_directory> <argument_list>
-       
-    at Linux or Mac command prompt. <mcr_directory> is the directory 
-    where version 8.2 of MCR is installed or the directory where 
-    MATLAB is installed on the machine. <argument_list> is all the 
-    arguments you want to pass to your application. For example, 
-
-    If you have version 8.2 of the MCR installed in 
-    /mathworks/home/application/v82, run the shell script as:
-    
-       ./run_muxrecon.sh /mathworks/home/application/v82
-       
-    If you have MATLAB installed in /mathworks/devel/application/matlab, 
-    run the shell script as:
-    
-       ./run_muxrecon.sh /mathworks/devel/application/matlab
--MCRInstaller.zip
-   -if end users are unable to download the MCR using the above  
-    link, include it when building your component by clicking 
-    the "Add MCR" link in the Deployment Tool
--This readme file 
-
-3. Definitions
-
-For information on deployment terminology, go to 
-http://www.mathworks.com/help. Select MATLAB Compiler >   
-Getting Started > About Application Deployment > 
-Application Deployment Terms in the MathWorks Documentation 
-Center.
-
-
-4. Appendix 
-
-A. Linux x86-64 systems:
-   On the target machine, add the MCR directory to the environment variable 
-   LD_LIBRARY_PATH by issuing the following commands:
-
-        NOTE: <mcr_root> is the directory where MCR is installed
-              on the target machine.         
-
-            setenv LD_LIBRARY_PATH
-                $LD_LIBRARY_PATH:
-                <mcr_root>/v82/runtime/glnxa64:
-                <mcr_root>/v82/bin/glnxa64:
-                <mcr_root>/v82/sys/os/glnxa64
-            setenv XAPPLRESDIR <mcr_root>/v82/X11/app-defaults
-
-   For more detail information about setting MCR paths, see Distribution to End Users in 
-   the MATLAB Compiler documentation in the MathWorks Documentation Center.
-
-
-     
-        NOTE: To make these changes persistent after logout on Linux 
-              or Mac machines, modify the .cshrc file to include this  
-              setenv command.
-        NOTE: The environment variable syntax utilizes forward 
-              slashes (/), delimited by colons (:).  
-        NOTE: When deploying standalone applications, it is possible 
-              to run the shell script file run_muxrecon.sh 
-              instead of setting environment variables. See 
-              section 2 "Files to Deploy and Package".    
-
-
-
-
-
-
+  ./nimsdata.py -i -p pfile -w nifti --parser_kwarg="num_jobs=4" --parser_kwarg="num_virtual_coils=16" --parser_kwarg="recon_type=1Dgrappa_sense1" /path/to/P01024.7 /path/to/outfile
+  
+Note that num_jobs is the number of slices to reconstruct in parallel. For diffusion scans, you can usually set this to the number of cores that you have (e.g., 4 for a quad-core system). The fMRI data, the number of parallel jobs you can do will probably limited by how much RAM you have.
