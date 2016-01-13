@@ -843,11 +843,14 @@ class NIMSPFile(medimg.MedImgReader):
         if 'd' in mat:
             sz = mat['d_size'].flatten().astype(int)
             slice_locs = mat['sl_loc'].flatten().astype(int) - 1
-            imagedata = np.zeros(sz, mat['d'].dtype)
             raw = np.atleast_3d(mat['d'])
             if len(slice_locs)<raw.shape[2]:
                 slice_locs = range(raw.shape[2])
                 log.warning('Slice_locs is too short. Assuming slice_locs=[0,1,...,nslices]')
+            if sz[3] != raw.shape[3]:
+                sz[3] = raw.shape[3]
+                log.warning('Incorrect numer of timepoints-- fixing based on actual array size.')
+            imagedata = np.zeros(sz, raw.dtype)
             imagedata[:,:,slice_locs,...] = raw[::-1,...]
         elif 'MIP_res' in mat:
             imagedata = np.atleast_3d(mat['MIP_res'])
@@ -1010,6 +1013,10 @@ class NIMSPFile(medimg.MedImgReader):
 
         fermi_filt = 1
         homodyne = 1
+        # NOTE: to use CUDA GPU acceleration, the GPU must have enough RAM to support reconstructing num_jobs in parallel.
+        # Also, GPU currently uses single-precision math, while CPU uses double precision. We are still investigating if
+        # if this is an important difference.
+        use_gpu = 0
 
         log.debug(self.aux_file)
         with tempfile.TemporaryDirectory(dir=tempdir) as temp_dirpath:
@@ -1065,7 +1072,7 @@ class NIMSPFile(medimg.MedImgReader):
                     % (self.num_vcoils, filepath, temp_dirpath, self.num_jobs, recon_type, fermi_filt, homodyne, self.notch_thresh))
             if cal_file!='':
                 log.info('Using calibration file: %s' % cal_file)
-            recon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'mux_epi_recon_bin'))
+            recon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'muxrt_recon_bin')) # 'mux_epi_recon_bin'
             outname = os.path.join(temp_dirpath, 'sl')
 
             mux_recon_jobs = []
@@ -1077,8 +1084,10 @@ class NIMSPFile(medimg.MedImgReader):
                     # Use 'str' on timepoints so that an empty array will produce '[]'
                     #cmd = ('%s --no-window-system -p %s --eval \'mux_epi_main("%s", "%s_%03d.mat", "%s", %d, %s, %d, 0, "%s", %s, %s, %s);\''
                     #    % (octave_bin, recon_path, filepath, outname, slice_num, cal_file, slice_num + 1, str(timepoints), self.num_vcoils, recon_type, str(fermi_filt), str(homodyne), str(self.notch_thresh)))
-                    cmd = ("%s/run_muxrecon.sh %s/lib '%s' '%s_%03d.mat' '%s' %d %d '%s'"
-                        % (recon_path, recon_path, filepath, outname, slice_num, cal_file, slice_num+1, self.num_vcoils, recon_type))
+                    #cmd = ("%s/run_muxrecon.sh %s/lib '%s' '%s_%03d.mat' '%s' %d %d '%s'"
+                    #    % (recon_path, recon_path, filepath, outname, slice_num, cal_file, slice_num+1, self.num_vcoils, recon_type))
+                    cmd = ("%s/run_muxrecon.sh %s/lib '%s' '%s_%03d.mat' '%s' %d %d '%s' 0 %d"
+                        % (recon_path, recon_path, filepath, outname, slice_num, cal_file, slice_num+1, self.num_vcoils, recon_type, use_gpu))
                     log.debug(cmd)
                     mux_recon_jobs.append(subprocess.Popen(args=shlex.split(cmd), stdout=open('/dev/null', 'w')))
                     slice_num += 1
