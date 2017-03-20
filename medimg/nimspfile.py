@@ -198,7 +198,7 @@ class NIMSPFile(medimg.MedImgReader):
     parse_priority = 5
     state = ['orig']
 
-    def __init__(self, filepath, load_data=False, full_parse=False, tempdir=None, aux_file=None, num_jobs=4, num_virtual_coils=16, notch_thresh=0, recon_type=None):
+    def __init__(self, filepath, load_data=False, full_parse=False, tempdir=None, aux_file=None, num_jobs=4, num_virtual_coils=16, notch_thresh=0, recon_type=None, use_gpu=True):
         """
         Read basic sorting information.
 
@@ -223,6 +223,8 @@ class NIMSPFile(medimg.MedImgReader):
             muxepi only, number of virtual coils
         recon_type : NoneType or str
             muxepi only, if recon_type is 'sense', then run sense recon
+        use_gpu : bool [default False]
+            muxepi only: use GPU-accelerated recon
         aux_file : None or str
             path to pfile.tgz that contains valid vrgf.dat and ref.dat files
 
@@ -239,6 +241,7 @@ class NIMSPFile(medimg.MedImgReader):
         self.num_vcoils = num_virtual_coils
         self.notch_thresh = notch_thresh
         self.recon_type = recon_type
+        self.use_gpu = use_gpu
         self.aux_file = aux_file
         self.tempdir = tempdir
         self.data = None
@@ -291,8 +294,8 @@ class NIMSPFile(medimg.MedImgReader):
 
         """
         dcm.mr.ge.infer_psd_type(self)
-        if self.psd_type == 'epi' and int(self._hdr.rec.user6) > 0:  # XXX HACK check for misnamed mux scans
-            self.psd_type = 'muxepi'
+        #if self.psd_type == 'epi' and int(self._hdr.rec.user6) > 0:  # XXX HACK check for misnamed mux scans
+        #    self.psd_type = 'muxepi'
         log.debug('psd_name: %s, psd_type: %s' % (self.psd_name, self.psd_type))
 
     def infer_scan_type(self):
@@ -482,6 +485,7 @@ class NIMSPFile(medimg.MedImgReader):
             self.size = [self._hdr.image.dim_X, self._hdr.image.dim_Y]  # imatrix_Y
             self.fov = [self._hdr.image.dfov, self._hdr.image.dfov_rect]
             self.num_bands = 1
+            self.band_spacing_mm = 0
             self.num_mux_cal_cycle = 0
             self.num_timepoints = self._hdr.rec.npasses
             # Some sequences (e.g., muxepi) acuire more timepoints that will be available in the resulting data file.
@@ -500,7 +504,6 @@ class NIMSPFile(medimg.MedImgReader):
             if self.psd_type == 'spiral':
                 self.num_timepoints = int(self._hdr.rec.user0)    # not in self._hdr.rec.nframes for sprt
                 self.deltaTE = self._hdr.rec.user15
-                self.band_spacing = 0
                 self.scale_data = True
                 # spiral is always a square encode based on the frequency encode direction (size_x)
                 # Atsushi also likes to round up to the next higher power of 2.
@@ -522,7 +525,9 @@ class NIMSPFile(medimg.MedImgReader):
                 self.band_spacing_mm = self._hdr.rec.user8
                 # When ARC is used with mux, the number of acquired TRs is greater than what's Rxed.
                 # ARC calibration uses multi-shot, so the additional TRs = num_bands*(ileaves-1)*num_mux_cal_cycle
-                self.num_timepoints = self._hdr.rec.npasses + self.num_bands * (self._hdr.rec.ileaves-1) * self.num_mux_cal_cycle
+                self.num_cal_timepoints = self.num_bands * self.num_mux_cal_cycle + self.num_bands * (self._hdr.rec.ileaves-1) * self.num_mux_cal_cycle
+                self.cal_duration = self.num_cal_timepoints * self.tr
+                # self.num_timepoints = self._hdr.rec.npasses + self.num_cal_timepoints
                 # The actual number of images returned by the mux recon is npasses - num_calibration_passes + num_mux_cal_cycle
                 self.num_timepoints_available = self._hdr.rec.npasses - self.num_bands * self.num_mux_cal_cycle + self.num_mux_cal_cycle
                 # TODO: adjust the image.tlhc... fields to match the correct geometry.
@@ -560,7 +565,11 @@ class NIMSPFile(medimg.MedImgReader):
             self.dwi_bvalue = self._hdr.rec.user1 if self.version == 24 else self._hdr.rec.user22
             self.is_dwi = True if self.dwi_numdirs >= 6 else False
             # if bit 4 of rhtype(int16) is set, then fractional NEX (i.e., partial ky acquisition) was used.
-            self.partial_ky = self._hdr.rec.scan_type & np.uint16(16) > 0
+            #if self._hdr.rec.scan_type & np.uint16(16) > 0:
+            if self._hdr.rec.hnover > 0:
+                self.partial_ky = float(self._hdr.rec.hnover + self._hdr.rec.nframes) / float(self._hdr.rec.nframes) / 2.0
+            else:
+                self.partial_ky = 1.0
             # was pepolar used to flip the phase encode direction?
             self.phase_encode_direction = 1 if np.bitwise_and(self._hdr.rec.dacq_ctrl,4)==4 else 0
             self.caipi = self._hdr.rec.user13   # true: CAIPIRINHA-type acquisition; false: Direct aliasing of simultaneous slices.
@@ -617,6 +626,7 @@ class NIMSPFile(medimg.MedImgReader):
             # Fix the half-voxel offset. Apparently, the p-file convention specifies coords at the
             # corner of a voxel. But DICOM/NIFTI convention is the voxel center. So offset by a half-voxel.
             origin = image_position + (row_cosines+col_cosines)*(np.array(self.mm_per_vox)/2)
+            # origin = image_position * np.array([-1., -1., 1.]) + (row_cosines+col_cosines)*(np.array(self.mm_per_vox)/2)
             # The DICOM standard defines these two unit vectors in an LPS coordinate frame, but we'll
             # need RAS (+x is right, +y is anterior, +z is superior) for NIFTI. So, we compute them
             # such that self.row_cosines points to the right and self.col_cosines points up.
@@ -636,9 +646,35 @@ class NIMSPFile(medimg.MedImgReader):
             log.debug((self.psd_name, self.psd_type, self.scan_type))
             if self.psd_type == 'muxepi' and self.num_mux_cal_cycle < 2:
                 if self.aux_file:
-                    log.warning('muxepi without own calibration, will checking aux_file %s.' % self.aux_file)
+                    log.warning('muxepi without own calibration, checking aux_file %s.' % self.aux_file)
                 else:
-                    log.warning('muxepi without own calibration. please provide an aux_file to load_data fxn.')
+                    log.warning('muxepi without own calibration. please provide an aux_file with calibration data.')
+
+            self.md_json = {'exam_number': self.exam_no, 'exam_uid': self.exam_uid,
+                            'series_number': self.series_no, 'series_uid': self.series_uid,
+                            'series_description': self.series_desc, 'acquisition_number': self.acq_no,
+                            'patient_id': self.patient_id, 'receive_coil_name': self.receive_coil_name,
+                            'num_slices': self.num_slices, 'num_receivers': self.num_receivers, 'operator': self.operator,
+                            'protocol_name': self.protocol_name, 'scanner_name': self.scanner_name,
+                            'scanner_type': self.scanner_type, 'study_date': self.study_date,
+                            'study_time': self.study_time, 'ti': self.ti, 'tr': self.tr, 'te': self.te,
+                            'mt_offset_hz': self.mt_offset_hz, 'flip_angle': self.flip_angle,
+                            'pixel_bandwidth': self.pixel_bandwidth, 'phase_encode': self.phase_encode,
+                            'effective_echo_spacing': self.effective_echo_spacing,
+                            'phase_encode_undersample': self.phase_encode_undersample,
+                            'slice_encode_undersample': self.slice_encode_undersample,
+                            'fov': self.fov, 'acquisition_matrix_x': self.acquisition_matrix_x,
+                            'acquisition_matrix_y': self.acquisition_matrix_y, 'partial_ky': self.partial_ky,
+                            'num_echos': self.num_echos, 'psd_type': self.psd_type, 'psd_name': self.psd_name,
+                            'num_acquired_timepoints': self.num_timepoints}
+            if self.psd_type=='muxepi':
+                self.md_json['num_bands'] = self.num_bands
+                self.md_json['num_mux_cal_cycle'] = self.num_mux_cal_cycle
+                self.md_json['band_spacing_mm'] = self.band_spacing_mm
+                self.md_json['num_mux_cal_timepoints'] = self.num_cal_timepoints
+                self.md_json['mux_cal_duration_secs'] = self.cal_duration
+                self.md_json['mux_cal_file'] = self.aux_file
+
             self.full_parsed = True
             self.metadata_status = 'complete'
 
@@ -740,7 +776,7 @@ class NIMSPFile(medimg.MedImgReader):
 
         # common stuff that can occur after the recon_func has been run, and data
         # loaded into self.data, if a recon func was successfull, self.data will be a dict, instead of None
-        if self.data:
+        if self.data and not isinstance(self.data, basestring):
             for k in self.data.iterkeys():
                 if self.reverse_slice_order:
                     self.data[k] = self.data[k][:,:,::-1,]
@@ -852,6 +888,9 @@ class NIMSPFile(medimg.MedImgReader):
                 log.warning('Incorrect numer of timepoints-- fixing based on actual array size.')
             imagedata = np.zeros(sz, raw.dtype)
             imagedata[:,:,slice_locs,...] = raw[::-1,...]
+            if 'recon_version' not in self.md_json and 'gitcommit' in mat:
+                self.md_json['recon_version'] = str(mat['gitcommit'][0])
+
         elif 'MIP_res' in mat:
             imagedata = np.atleast_3d(mat['MIP_res'])
             imagedata = imagedata.transpose((1,0,2,3))[::-1,::-1,:,:]
@@ -932,6 +971,7 @@ class NIMSPFile(medimg.MedImgReader):
             basepath = os.path.join(temp_dirpath, 'recon')
             spirec_path = os.path.join(recon_path, 'spirec')
             cmd = '%s -l --rotate -90 --magfile --savefmap2 --b0navigator -r %s -t %s' % (spirec_path, pfile_path, basepath)
+            self.md_json['recon_command'] = cmd
             log.debug(cmd)
             subprocess.call(shlex.split(cmd), cwd=temp_dirpath, stdout=open('/dev/null', 'w'))  # run spirec to generate .mag and fieldmap files
             log.debug(os.listdir(temp_dirpath))
@@ -966,7 +1006,7 @@ class NIMSPFile(medimg.MedImgReader):
         """
         # FIXME: the following is a hack to get mux_epi2 SE-IR scans to recon properly. There *is* a more generic solution...
         # some mux scans don't have their own calibration, and require fetching calibration a scan with the same psd_name.
-        if self.psd_type=='muxepi' and (self.num_mux_cal_cycle<2 or (self.psd_name=='mux_epi2' and self.ti>0)):
+        if self.psd_type=='muxepi' and self.num_bands>1: # and (self.num_mux_cal_cycle<2 or (self.psd_name=='mux_epi2' and self.ti>0)):
             aux_data = { 'psd': self.psd_name }
         else:
             aux_data = None
@@ -992,6 +1032,8 @@ class NIMSPFile(medimg.MedImgReader):
             path to octave executable, default assumes octave can be found in $PATH
 
         """
+        from muxrt_recon_bin.mux_recon import MuxRecon
+        
         start_sec = time.time()
         log.debug('MUXEPI recon of %s started at %d' % (filepath, start_sec))
         basename = os.path.basename(filepath)
@@ -1002,10 +1044,12 @@ class NIMSPFile(medimg.MedImgReader):
             # Diffusion and inversion-recovery (for T1-mapping) always get SENSE1.
             # (Eventually we
             if self.is_dwi or self.ti>0.0:
-                recon_type = '1Dgrappa_sense1'
+                recon_type = 'split-slice-grappa_sense1'
             else:
                 if self.series_desc and 'sense1' in self.series_desc.lower():
                     recon_type = '1Dgrappa_sense1'
+                elif self.series_desc and self.series_desc.lower().endswith('_ssg'):
+                    recon_type = 'split-slice-grappa_sense1'
                 else:
                     recon_type = '1Dgrappa'
         else:
@@ -1019,97 +1063,76 @@ class NIMSPFile(medimg.MedImgReader):
         use_gpu = 0
 
         log.debug(self.aux_file)
+
         with tempfile.TemporaryDirectory(dir=tempdir) as temp_dirpath:
             # identification and extraction of the aux file has been moved into tempdir context manager
             # to allow extraction of the valid vrgf and ref within tempdir.
             # cal file must be either '', or dir/basename that is similar between ref.dat and vrgf.dat
-            cal_file = ''  # XXX matlab/octave, base path determine names of ref.dat and vrgf.dat
-            log.debug('checking num_mux_cal_cycle: %d' % self.num_mux_cal_cycle)
-            # matlab code checks for num_mux_cal_cycles, so why don't we check the same thing
-            # even scans without num_mux_cal_cycles will still have ref/vrgf files that exceed 64 bytes
-            if self.num_mux_cal_cycle < 2:
-                log.debug('num_mux_cal_cycle: %d. looking for calibration from a different acq.' % self.num_mux_cal_cycle)
-                if self.aux_file:
-                    if tarfile.is_tarfile(self.aux_file):
-                        with tarfile.open(self.aux_file) as aux_archive:
-                            log.debug('inspecting aux file: %s' % self.aux_file)
-                            aux_archive.extractall(path=temp_dirpath)
-                        aux_subdir = os.listdir(temp_dirpath)[0]
-                        aux_datadir = os.path.join(temp_dirpath, aux_subdir)
-                        for f in os.listdir(aux_datadir):
-                            if f.endswith('_ref.dat'):
-                                cal_ref_file = os.path.join(aux_datadir, f)
-                                log.debug('_ref.dat found, %s' % cal_ref_file)
-                            elif f.endswith('_vrgf.dat'):
-                                cal_vrgf_file = os.path.join(aux_datadir, f)
-                                log.debug('_vrgf.dat found, %s' % cal_vrgf_file)
-                        if cal_ref_file and cal_vrgf_file:
-                            if cal_ref_file.rsplit('_', 1)[0] == cal_vrgf_file.rsplit('_', 1)[0]:
-                                cal_file = cal_ref_file.rsplit('_', 1)[0]
-                    elif is_gzip(self.aux_file):
-                        for f in os.listdir(os.path.dirname(self.aux_file)):
-                            fname = os.path.join(os.path.dirname(self.aux_file), f)
-                            if is_gzip(fname):
-                                log.debug('uncompressing %s' % fname)
-                                newpath = uncompress(fname, temp_dirpath)
-                            if fname.endswith('_ref.dat'):
-                                cal_ref_file = os.path.join(temp_dirpath, f)
-                                os.symlink(fname, cal_ref_file)
-                                log.debug('_ref.dat found, %s' % cal_ref_file)
-                            elif fname.endswith('_vrgf.dat'):
-                                cal_vrgf_file = os.path.join(temp_dirpath, f)
-                                os.symlink(fname, cal_vrgf_file)
-                                log.debug('_vrgf.dat found, %s' % cal_vrgf_file)
-                        if cal_ref_file and cal_vrgf_file:
+            cal_file = ''
+            cal_ref_file = ''
+            cal_vrgf_file = ''
+            if self.aux_file:
+                if tarfile.is_tarfile(self.aux_file):
+                    with tarfile.open(self.aux_file) as aux_archive:
+                        log.debug('inspecting aux file: %s' % self.aux_file)
+                        aux_archive.extractall(path=temp_dirpath)
+                    aux_subdir = os.listdir(temp_dirpath)[0]
+                    aux_datadir = os.path.join(temp_dirpath, aux_subdir)
+                    for f in os.listdir(aux_datadir):
+                        if f.endswith('_ref.dat') or f.endswith('_refscan.7'):
+                            cal_ref_file = os.path.join(aux_datadir, f)
+                        elif f.endswith('_vrgf.dat'):
+                            cal_vrgf_file = os.path.join(aux_datadir, f)
+                    if cal_ref_file and cal_vrgf_file:
+                        if cal_ref_file.rsplit('_', 1)[0] == cal_vrgf_file.rsplit('_', 1)[0]:
+                            cal_file = cal_ref_file.rsplit('_', 1)[0]
+                elif is_gzip(self.aux_file):
+                    for f in os.listdir(os.path.dirname(self.aux_file)):
+                        fname = os.path.join(os.path.dirname(self.aux_file), f)
+                        if is_gzip(fname):
+                            log.debug('uncompressing %s' % fname)
+                            newpath = uncompress(fname, temp_dirpath)
                             cal_file = newpath
-                if cal_file != '':
-                    log.info('ref/vrgf.dat not found-- using calibration ref/vrgf from %s' % cal_file)
-                else:
-                    raise NIMSPFileError('ref.dat/vrgf.dat not found')
+                        if fname.endswith('_ref.dat') or fname.endswith('_refscan.7'):
+                            cal_ref_file = os.path.join(temp_dirpath, f)
+                            os.symlink(fname, cal_ref_file)
+                        elif fname.endswith('_vrgf.dat'):
+                            cal_vrgf_file = os.path.join(temp_dirpath, f)
+                            os.symlink(fname, cal_vrgf_file)
+                    if cal_ref_file and cal_vrgf_file:
+                        log.debug('cal ref scan data found: %s' % cal_ref_file)
+                        log.debug('cal vrgf found, %s' % cal_vrgf_file)
 
             # run the actual recon, spawning subprocess until all slices have been spawned.
             log.info('Running %d v-coil mux recon on %s in tempdir %s with %d jobs (recon=%s, fermi=%d, homodyne=%d, notch=%f).'
                     % (self.num_vcoils, filepath, temp_dirpath, self.num_jobs, recon_type, fermi_filt, homodyne, self.notch_thresh))
-            if cal_file!='':
+            if cal_file:
                 log.info('Using calibration file: %s' % cal_file)
-            recon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'muxrt_recon_bin')) # 'mux_epi_recon_bin'
-            outname = os.path.join(temp_dirpath, 'sl')
-
-            mux_recon_jobs = []
-            slice_num = 0
-            while slice_num < self.num_slices:
-                num_running_jobs = sum([job.poll()==None for job in mux_recon_jobs])
-                if num_running_jobs < self.num_jobs:
-                    # Recon each slice separately. Note the slice_num+1 to deal with matlab's 1-indexing.
-                    # Use 'str' on timepoints so that an empty array will produce '[]'
-                    #cmd = ('%s --no-window-system -p %s --eval \'mux_epi_main("%s", "%s_%03d.mat", "%s", %d, %s, %d, 0, "%s", %s, %s, %s);\''
-                    #    % (octave_bin, recon_path, filepath, outname, slice_num, cal_file, slice_num + 1, str(timepoints), self.num_vcoils, recon_type, str(fermi_filt), str(homodyne), str(self.notch_thresh)))
-                    #cmd = ("%s/run_muxrecon.sh %s/lib '%s' '%s_%03d.mat' '%s' %d %d '%s'"
-                    #    % (recon_path, recon_path, filepath, outname, slice_num, cal_file, slice_num+1, self.num_vcoils, recon_type))
-                    cmd = ("%s/run_muxrecon.sh %s/lib '%s' '%s_%03d.mat' '%s' %d %d '%s' 0 %d"
-                        % (recon_path, recon_path, filepath, outname, slice_num, cal_file, slice_num+1, self.num_vcoils, recon_type, use_gpu))
-                    log.debug(cmd)
-                    mux_recon_jobs.append(subprocess.Popen(args=shlex.split(cmd), stdout=open('/dev/null', 'w')))
-                    slice_num += 1
-                else:
-                    time.sleep(1.)
-
-            # Now wait for all the jobs to finish
-            for job in mux_recon_jobs:
-                job.wait()
-
-            # Load the first slice to initialize the image array
-            img = self.load_imagedata_from_file("%s_%03d.mat" % (outname, 0))
-            for slice_num in range(1, self.num_slices):
-                new_img = self.load_imagedata_from_file("%s_%03d.mat" % (outname, slice_num))
-                # Allow for a partial last timepoint. This sometimes happens when the user aborts.
-                t = min(img.shape[-1], new_img.shape[-1])
-                img[...,0:t] += new_img[...,0:t]
-
-            if np.iscomplexobj(img):
-                self.update_imagedata((np.abs(img).astype(np.float32), np.angle(img).astype(np.float32)), ('','phase'))
+                # HACK! We assume that the dir containing the cal p-file has useful info about the cal file (exam, series, acq)
+                self.md_json['mux_cal_file'] = os.path.basename(os.path.dirname(cal_file))
             else:
-                self.update_imagedata((img.astype(np.float32),), ('',))
+                self.md_json['mux_cal_file'] = 'internal'
+
+            #mux_outdir = tempfile.TemporaryDirectory(dir=tempdir)
+            mux_outdir = '/tmp'
+            mux_recon = MuxRecon(pfile=filepath, cal=cal_file, outdir=mux_outdir, legacy=True)
+            mux_recon.get_muxed_params()
+            mux_recon.run_mux_recon(num_jobs=self.num_jobs, num_vcoils=self.num_vcoils, recon_method=recon_type)
+            mux_recon.cleanup()
+
+            self.qto_xyz = mux_recon.qto_xyz
+            
+            self.md_json['recon_method'] = recon_type
+            self.md_json['recon_num_virtual_coils'] = self.num_vcoils
+            self.md_json['recon_use_GPU'] = int(self.use_gpu)
+            self.md_json['recon_version'] = mux_recon.recon_version
+            self.md_json['mux_cal_type'] = mux_recon.cal_type
+            self.md_json['num_mux_cal_volumes_in_nifti'] = mux_recon.num_mux_cal_volumes_in_nifti
+            self.md_json['num_volumes_in_nifti'] = mux_recon.num_volumes_in_nifti
+            self.md_json['num_usable_volumes_in_nifti'] = mux_recon.num_volumes_in_nifti - mux_recon.num_mux_cal_volumes_in_nifti
+
+            self.data = mux_recon.outdir
+
             elapsed = time.time() - start_sec
             log.info('Mux recon of %s with %d v-coils finished in %0.2f minutes using %d jobs.'
                         % (self.filepath, self.num_vcoils,  elapsed/60., min(self.num_jobs, self.num_slices)))

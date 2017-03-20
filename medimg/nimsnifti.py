@@ -16,6 +16,7 @@ import os
 import bson
 import logging
 import nibabel
+import json
 
 import numpy as np
 
@@ -166,7 +167,7 @@ class NIMSNifti(medimg.MedImgReader, medimg.MedImgWriter):
         ----------
         metadata : object
             fully loaded instance of a NIMSReader.
-        imagedata : dict
+        imagedata : dict or string containing a path to a dir containing nifti(s)
             dictionary of np.darrays. label suffix as keys, with np.darrays as values.
         outbase : str
             output name prefix.
@@ -184,86 +185,106 @@ class NIMSNifti(medimg.MedImgReader, medimg.MedImgWriter):
             metadata or data is None.
 
         """
-        super(NIMSNifti, cls).write(metadata, imagedata, outbase, voxel_order)  # XXX FAIL! unexpected imagedata = None
-        results = []
-        for data_label, data in imagedata.iteritems():
-            if data is None:
-                continue
-            if voxel_order:
-                data, qto_xyz = cls.reorder_voxels(data, metadata.qto_xyz, voxel_order)
-            else:
-                qto_xyz = metadata.qto_xyz
-            outname = outbase + data_label
+        if isinstance(imagedata, basestring):
+            from glob import glob
+            from shutil import copyfile
+            # imagedata is a directory containing nifti(s)
+            log.info('Loading files from %s' % imagedata)
+            niftis = glob(imagedata + '/' + str(metadata.exam_no) + '_' + str(metadata.series_no) + '_' + str(metadata.acq_no) + '*.nii.gz')
+            results = []
+            for f in niftis:
+                filepath = os.path.join(os.path.dirname(outbase), os.path.basename(f))
+                copyfile(f, filepath)
+                results.append(filepath)
+        else:
+            super(NIMSNifti, cls).write(metadata, imagedata, outbase, voxel_order)  # XXX FAIL! unexpected imagedata = None
+            results = []
+            for data_label, data in imagedata.iteritems():
+                if data is None:
+                    continue
+                if voxel_order:
+                    data, qto_xyz = cls.reorder_voxels(data, metadata.qto_xyz, voxel_order)
+                else:
+                    qto_xyz = metadata.qto_xyz
+                outname = outbase + data_label
 
-            log.debug('creating nifti for %s' % data_label)
+                log.debug('creating nifti for %s' % data_label)
 
-            # TODO: nimsmrdata.adjust_bvecs to use affine from after reorient
-            if metadata.is_dwi and metadata.bvals is not None and metadata.bvecs is not None:
-                filepath = outbase + '.bval'
-                with open(filepath, 'w') as bvals_file:
-                    bvals_file.write(' '.join(['%0.1f' % value for value in metadata.bvals]))
-                log.debug('generated %s' % os.path.basename(filepath))
-                filepath = outbase + '.bvec'
-                with open(filepath, 'w') as bvecs_file:
-                    bvecs_file.write(' '.join(['%0.4f' % value for value in metadata.bvecs[0, :]]) + '\n')
-                    bvecs_file.write(' '.join(['%0.4f' % value for value in metadata.bvecs[1, :]]) + '\n')
-                    bvecs_file.write(' '.join(['%0.4f' % value for value in metadata.bvecs[2, :]]) + '\n')
-                log.debug('generated %s' % os.path.basename(filepath))
+                # TODO: nimsmrdata.adjust_bvecs to use affine from after reorient
+                if metadata.is_dwi and metadata.bvals is not None and metadata.bvecs is not None:
+                    filepath = outbase + '.bval'
+                    with open(filepath, 'w') as bvals_file:
+                        bvals_file.write(' '.join(['%0.1f' % value for value in metadata.bvals]))
+                    log.debug('generated %s' % os.path.basename(filepath))
+                    filepath = outbase + '.bvec'
+                    with open(filepath, 'w') as bvecs_file:
+                        bvecs_file.write(' '.join(['%0.4f' % value for value in metadata.bvecs[0, :]]) + '\n')
+                        bvecs_file.write(' '.join(['%0.4f' % value for value in metadata.bvecs[1, :]]) + '\n')
+                        bvecs_file.write(' '.join(['%0.4f' % value for value in metadata.bvecs[2, :]]) + '\n')
+                    log.debug('generated %s' % os.path.basename(filepath))
 
-            # write actually nifti
-            nifti = nibabel.Nifti1Image(data, None)
-            nii_header = nifti.get_header()
-            nifti.update_header()               # XXX are data and header ever "non-harmonious"
-            num_slices = data.shape[2]          # Don't trust metatdata.num_slices; might not match the # acquired.
-            nii_header.set_xyzt_units('mm', 'sec')
-            nii_header.set_qform(qto_xyz, 'scanner')
-            nii_header.set_sform(qto_xyz, 'scanner')
-            nii_header.set_dim_info(*([1, 0, 2] if metadata.phase_encode == 0 else [0, 1, 2]))
-            nii_header['slice_start'] = 0
-            nii_header['slice_end'] = num_slices - 1
+                # write nifti
+                nifti = nibabel.Nifti1Image(data, None)
+                nii_header = nifti.get_header()
+                nifti.update_header()               # XXX are data and header ever "non-harmonious"
+                num_slices = data.shape[2]          # Don't trust metatdata.num_slices; might not match the # acquired.
+                nii_header.set_xyzt_units('mm', 'sec')
+                nii_header.set_qform(qto_xyz, 'scanner')
+                nii_header.set_sform(qto_xyz, 'scanner')
+                nii_header.set_dim_info(*([1, 0, 2] if metadata.phase_encode == 0 else [0, 1, 2]))
+                nii_header['slice_start'] = 0
+                nii_header['slice_end'] = num_slices - 1
 
-            nii_header.set_slice_duration(metadata.slice_duration)
-            nii_header['slice_code'] = metadata.slice_order
-            if np.iscomplexobj(data):
-                clip_vals = np.percentile(np.abs(data), (10.0, 99.5))
-            else:
-                clip_vals = np.percentile(data, (10.0, 99.5))
-            nii_header.structarr['cal_min'] = clip_vals[0]
-            nii_header.structarr['cal_max'] = clip_vals[1]
-            nii_header.set_data_dtype(data.dtype)
+                nii_header.set_slice_duration(metadata.slice_duration)
+                nii_header['slice_code'] = metadata.slice_order
+                if np.iscomplexobj(data):
+                    clip_vals = np.percentile(np.abs(data), (10.0, 99.5))
+                else:
+                    clip_vals = np.percentile(data, (10.0, 99.5))
+                nii_header.structarr['cal_min'] = clip_vals[0]
+                nii_header.structarr['cal_max'] = clip_vals[1]
+                nii_header.set_data_dtype(data.dtype)
 
-            # Stuff some extra data into the description field (max of 80 chars)
-            # Other unused fields: nii_header['data_type'] (10 chars), nii_header['db_name'] (18 chars),
-            te = 0 if not metadata.te else metadata.te
-            ti = 0 if not metadata.ti else metadata.ti
-            flip_angle = 0 if not metadata.flip_angle else metadata.flip_angle
-            effective_echo_spacing = 0. if not metadata.effective_echo_spacing else metadata.effective_echo_spacing
-            acquisition_matrix = [0, 0] if metadata.acquisition_matrix == (None, None) else metadata.acquisition_matrix
-            mt_offset_hz = 0. if not metadata.mt_offset_hz else metadata.mt_offset_hz
-            phase_encode_undersample = 1 if not metadata.phase_encode_undersample else metadata.phase_encode_undersample
-            slice_encode_undersample = 1 if not metadata.slice_encode_undersample else metadata.slice_encode_undersample
-            nii_header['descrip'] = 'te=%.2f;ti=%.0f;fa=%.0f;ec=%.4f;acq=[%s];mt=%.0f;rp=%.1f;' % (
-                    te * 1000.,
-                    ti * 1000.,
-                    flip_angle,
-                    effective_echo_spacing * 1000.,
-                    ','.join(map(str, acquisition_matrix)),
-                    mt_offset_hz,
-                    1. / phase_encode_undersample,
-                    )
-            if '3D' in (metadata.acquisition_type or ''):
-                nii_header['descrip'] = str(nii_header['descrip']) + 'rs=%.1f' % (1. / slice_encode_undersample)
-            if metadata.phase_encode_direction != None:
-                nii_header['descrip'] = str(nii_header['descrip']) + 'pe=%d' % (metadata.phase_encode_direction)
-            if metadata.is_fastcard:
-                nii_header['descrip'] = str(nii_header['descrip']) + 'ves=%f;ve=%d' % (metadata.velocity_encode_scale or 0., metadata.velocity_encoding or 0)
+                # Stuff some extra data into the description field (max of 80 chars)
+                # Other unused fields: nii_header['data_type'] (10 chars), nii_header['db_name'] (18 chars),
+                te = 0 if not metadata.te else metadata.te
+                ti = 0 if not metadata.ti else metadata.ti
+                flip_angle = 0 if not metadata.flip_angle else metadata.flip_angle
+                effective_echo_spacing = 0. if not metadata.effective_echo_spacing else metadata.effective_echo_spacing
+                acquisition_matrix = [0, 0] if metadata.acquisition_matrix == (None, None) else metadata.acquisition_matrix
+                mt_offset_hz = 0. if not metadata.mt_offset_hz else metadata.mt_offset_hz
+                phase_encode_undersample = 1 if not metadata.phase_encode_undersample else metadata.phase_encode_undersample
+                slice_encode_undersample = 1 if not metadata.slice_encode_undersample else metadata.slice_encode_undersample
+                nii_header['descrip'] = 'te=%.2f;ti=%.0f;fa=%.0f;ec=%.4f;acq=[%s];mt=%.0f;rp=%.1f;' % (
+                        te * 1000.,
+                        ti * 1000.,
+                        flip_angle,
+                        effective_echo_spacing * 1000.,
+                        ','.join(map(str, acquisition_matrix)),
+                        mt_offset_hz,
+                        1. / phase_encode_undersample,
+                        )
+                if '3D' in (metadata.acquisition_type or ''):
+                    nii_header['descrip'] = str(nii_header['descrip']) + 'rs=%.1f' % (1. / slice_encode_undersample)
+                if metadata.phase_encode_direction != None:
+                    nii_header['descrip'] = str(nii_header['descrip']) + 'pe=%d' % (metadata.phase_encode_direction)
+                if metadata.is_fastcard:
+                    nii_header['descrip'] = str(nii_header['descrip']) + 'ves=%f;ve=%d' % (metadata.velocity_encode_scale or 0., metadata.velocity_encoding or 0)
 
-            nii_header['pixdim'][4] = metadata.tr   # XXX pixdim[4] = TR, even when non-timeseries. not nifti compliant
+                nii_header['pixdim'][4] = metadata.tr   # XXX pixdim[4] = TR, even when non-timeseries. not nifti compliant
 
-            filepath = outname + '.nii.gz'
-            nibabel.save(nifti, filepath)
-            log.debug('generated %s' % os.path.basename(filepath))
+                filepath = outname + '.nii.gz'
+                nibabel.save(nifti, filepath)
+                results.append(filepath)
+                log.info('generated %s' % os.path.basename(filepath))
+
+        if hasattr(metadata, 'md_json'):
+            filepath = outbase + '.json'
+            with open(filepath, 'w') as fp:
+                json.dump(metadata.md_json, fp, indent=2, sort_keys=True)
+            log.info('generated %s' % os.path.basename(filepath))
             results.append(filepath)
+            log.info('json file %s' % filepath)
 
         return results
 

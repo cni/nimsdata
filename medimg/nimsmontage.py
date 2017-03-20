@@ -276,33 +276,66 @@ class NIMSMontage(medimg.MedImgReader, medimg.MedImgWriter):
             metadata or data is None.
 
         """
-        super(NIMSMontage, cls).write(metadata, imagedata, outbase, voxel_order)
 
-        results = []
-        for data_label, data in imagedata.iteritems():
-            if not multi and data_label is not '':
-                continue
+        if isinstance(imagedata, basestring):
+            import nibabel
+            from shutil import rmtree
+            from glob import glob
+            # imagedata is a directory containing nifti(s)
+            log.info('Loading files from %s' % imagedata)
+            niftis = glob(imagedata + '/' + str(metadata.exam_no) + '_' + str(metadata.series_no) + '_' + str(metadata.acq_no) + '.nii.gz')
+            results = []
+            for f in niftis:
+                # HACK for the outname when there're more than one nifti files for the dataset
+                outname = outbase + os.path.basename(f)[(len(str(metadata.exam_no))+len(str(metadata.series_no))+len(str(metadata.acq_no))+2):-7]
+                data = nibabel.load(f).get_data()
 
-            if data is None:
-                continue
-            data = imagedata.get(data_label)
-            outname = outbase + data_label
+                if voxel_order:
+                    data, _ = cls.reorder_voxels(data, metadata.qto_xyz, voxel_order)
+                if mtype == 'sqlite':
+                    log.debug('type: sqlite')
+                    result = generate_sqlite_pyr(data, outname + '.pyrdb', tilesize)
+                elif mtype == 'dir':
+                    log.debug('type: directory')
+                    result = generate_dir_pyr(data, outname, tilesize)
+                elif mtype == 'png':
+                    log.debug('type: flat png')
+                    result = generate_flat(data, outname + '.png')
+                else:
+                    raise NIMSMontageError('montage mtype must be sqlite, dir or png. not %s' % mtype)
 
-            if voxel_order:
-                data, _ = cls.reorder_voxels(data, metadata.qto_xyz, voxel_order)
-            if mtype == 'sqlite':
-                log.debug('type: sqlite')
-                result = generate_sqlite_pyr(data, outname + '.pyrdb', tilesize)
-            elif mtype == 'dir':
-                log.debug('type: directory')
-                result = generate_dir_pyr(data, outname, tilesize)
-            elif mtype == 'png':
-                log.debug('type: flat png')
-                result = generate_flat(data, outname + '.png')
-            else:
-                raise NIMSMontageError('montage mtype must be sqlite, dir or png. not %s' % mtype)
+                results.append(result)
+            rmtree(imagedata)
 
-            results.append(result)
+        else:
+            super(NIMSMontage, cls).write(metadata, imagedata, outbase, voxel_order)
+
+            results = []
+            for data_label, data in imagedata.iteritems():
+                if not multi and data_label is not '':
+                    continue
+
+                if data is None:
+                    continue
+                data = imagedata.get(data_label)
+                outname = outbase + data_label
+
+                if voxel_order:
+                    data, _ = cls.reorder_voxels(data, metadata.qto_xyz, voxel_order)
+                if mtype == 'sqlite':
+                    log.debug('type: sqlite')
+                    result = generate_sqlite_pyr(data, outname + '.pyrdb', tilesize)
+                elif mtype == 'dir':
+                    log.debug('type: directory')
+                    result = generate_dir_pyr(data, outname, tilesize)
+                elif mtype == 'png':
+                    log.debug('type: flat png')
+                    result = generate_flat(data, outname + '.png')
+                else:
+                    raise NIMSMontageError('montage mtype must be sqlite, dir or png. not %s' % mtype)
+
+                results.append(result)
+
         return results
 
 write = NIMSMontage.write

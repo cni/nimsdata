@@ -7,3 +7,6 @@
 [submodule "spiral_recon"]
 	path = medimg/spiral_recon
 	url = git@github.com:cni/spiral_recon
+[submodule "muxrt_recon_bin"]
+	path = medimg/muxrt_recon_bin
+	url = https://github.com/cni/muxrt_recon_bin

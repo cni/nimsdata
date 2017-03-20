@@ -29,6 +29,7 @@ GEMS_TYPE_DERIVED_RFMT = ['DERIVED', 'SECONDARY', 'REFORMATTED', 'AVERAGE']
 TAG_RECON_FLAG = (0x0043, 0x107d)
 TAG_BVALUE = (0x0043, 0x1039)                                       # CSA_BVALUE = 'Slop_int_6...Slop_int_9'
 TAG_BVEC = [(0x0019, 0x10bb), (0x0019, 0x10bc), (0x0019, 0x10bd)]   # CSA_BVEC = ['UserData20', 'UserData21', 'UserData22']
+TAG_MUX_NUM_BANDS = (0x0019, 0x10bd)
 MAX_LOC_DCMS = nimsdicom.MAX_LOC_DCMS
 MetaExtractor = nimsdicom.MetaExtractor
 NIMSDicomError = nimsdicom.NIMSDicomError
@@ -146,6 +147,10 @@ def parse_one(self):
         self.is_non_image = True
 
     infer_psd_type(self)
+
+    if self.psd_type=='muxepi':
+        self.num_bands = self.getelem(self._hdr, TAG_MUX_NUM_BANDS)
+
     generic_mr.adjust_fov_acqmat(self)
     generic_mr.infer_scan_type(self)
 
