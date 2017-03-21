@@ -1130,6 +1130,7 @@ class NIMSPFile(medimg.MedImgReader):
             self.md_json['num_mux_cal_volumes_in_nifti'] = mux_recon.num_mux_cal_volumes_in_nifti
             self.md_json['num_volumes_in_nifti'] = mux_recon.num_volumes_in_nifti
             self.md_json['num_usable_volumes_in_nifti'] = mux_recon.num_volumes_in_nifti - mux_recon.num_mux_cal_volumes_in_nifti
+            self.md_json['recon_time'] = str(datetime.datetime.now())
 
             self.data = mux_recon.outdir
 
