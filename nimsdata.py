@@ -32,13 +32,13 @@ import tarfile
 import warnings
 import datetime
 import traceback
-import bson.json_util
+from bson import loads as bloads
 
 
 log = logging.getLogger(__name__)
 warnings.simplefilter('ignore', FutureWarning)
 
-# note: readers/writers.json will never contain datetime, or objects that require bson.json_util
+# note: readers/writers.json will never contain datetime, or objects that require bson
 READERS = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'readers.json')))
 WRITERS = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'writers.json')))
 MODULES = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modules.json')))
@@ -428,9 +428,8 @@ def parse(path, filetype=None, load_data=False, ignore_json=False, debug=False, 
         log.debug('ignore_json = True')
         if not filetype:
             raise NIMSDataError('filetype must be specified if ignore_json=True', log_level=logging.ERROR)
-        else:
-            ds = _parse_dataset(path, filetype, load_data, debug, **kwargs)
-            return ds
+        ds = _parse_dataset(path, filetype, load_data, debug, **kwargs)
+        return ds
 
     json_data = {}
     if os.path.isfile(path) and tarfile.is_tarfile(path):
@@ -438,7 +437,7 @@ def parse(path, filetype=None, load_data=False, ignore_json=False, debug=False, 
         with tarfile.open(path) as archive:
             for ti in archive:
                 try:
-                    json_data = json.loads(archive.extractfile(ti).read(), object_hook=bson.json_util.object_hook)
+                    json_data = bloads(archive.extractfile(ti).read())
                 except (TypeError, KeyError, AttributeError, ValueError):
                     pass
                 else:
@@ -568,7 +567,7 @@ class NIMSReader(object):
     acquisition_properties = acquisition_properties
 
     def _schema_init(self, schema):
-        for k, v in schema.iteritems():
+        for k, v in schema.items():
             if isinstance(v, dict):
                     self._schema_init(v)
             elif k == 'field' and not v.startswith('nims_'):
@@ -679,7 +678,7 @@ class NIMSReader(object):
                 value = ''
             properties.append((prop, str(value)))
 
-        return '\n'.join(['%-30s: %s' % (p, v) for p, v in properties])
+        return '\n'.join('%-30s: %s' % (p, v) for p, v in properties)
 
 
 class abstractclassmethod(classmethod):
